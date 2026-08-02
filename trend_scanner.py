@@ -26,23 +26,10 @@ def send_telegram_message(text):
         time.sleep(1)
 
 
-def get_google_trends_iraq():
-    """Pull trending searches for Iraq via pytrends."""
-    results = []
-    try:
-        from pytrends.request import TrendReq
-        pytrends = TrendReq(hl='en-US', tz=180)
-        # Iraq realtime/daily trending searches
-        df = pytrends.trending_searches(pn='iraq')
-        for term in df[0].tolist()[:15]:
-            results.append({"term": term, "source": "Google Trends (Iraq)", "score": 3})
-    except Exception as e:
-        print("Google Trends Iraq failed:", e)
-    return results
-
-
 def get_google_trends_related(seed_terms):
-    """For a handful of seed business categories, check interest_over_time trend direction."""
+    """For a list of seed business categories, check interest_over_time trend direction
+    for Iraq. Always keeps the top raw-interest terms too, even without strong growth,
+    so the digest isn't empty on quiet days."""
     results = []
     try:
         from pytrends.request import TrendReq
@@ -54,13 +41,22 @@ def get_google_trends_related(seed_terms):
                 if df is not None and not df.empty and len(df) > 4:
                     recent = df[term].tail(4).mean()
                     older = df[term].head(4).mean()
-                    if older > 0 and recent > older * 1.2:
+                    avg_interest = df[term].mean()
+                    if older > 0 and recent > older * 1.05:
                         growth = round((recent - older) / older * 100)
                         results.append({
                             "term": term,
                             "source": "Google Trends (growth)",
-                            "score": min(5, 2 + growth // 25),
+                            "score": min(5, 2 + growth // 15),
                             "note": f"+{growth}% search growth (Iraq, 3mo)"
+                        })
+                    elif avg_interest > 5:
+                        # No strong growth, but there's meaningful baseline search volume
+                        results.append({
+                            "term": term,
+                            "source": "Google Trends (interest)",
+                            "score": min(3, 1 + int(avg_interest // 20)),
+                            "note": f"Avg interest level: {round(avg_interest)}/100 (Iraq, 3mo)"
                         })
                 time.sleep(1)
             except Exception as e:
@@ -73,21 +69,26 @@ def get_google_trends_related(seed_terms):
 def get_reddit_trending(subreddits):
     """Pull hot posts from relevant subreddits as demand/interest signals."""
     results = []
+    reddit_headers = {
+        "User-Agent": "web:trend-scanner-bot:v1.0 (by /u/trendscanner)"
+    }
     for sub in subreddits:
         try:
-            url = f"https://www.reddit.com/r/{sub}/hot.json?limit=10"
-            resp = requests.get(url, headers=HEADERS, timeout=10)
+            url = f"https://www.reddit.com/r/{sub}/hot.json?limit=15"
+            resp = requests.get(url, headers=reddit_headers, timeout=10)
             if resp.ok:
                 data = resp.json()
-                for post in data["data"]["children"][:8]:
+                for post in data["data"]["children"][:10]:
                     p = post["data"]
-                    if p.get("score", 0) > 20:
+                    if p.get("score", 0) > 5 and not p.get("stickied"):
                         results.append({
                             "term": p["title"][:100],
                             "source": f"Reddit r/{sub}",
-                            "score": min(5, 1 + p["score"] // 200),
+                            "score": min(5, 1 + p["score"] // 100),
                             "url": f"https://reddit.com{p['permalink']}"
                         })
+            else:
+                print(f"Reddit fetch for r/{sub} returned status {resp.status_code}")
         except Exception as e:
             print(f"Reddit fetch failed for r/{sub}:", e)
         time.sleep(1)
@@ -128,18 +129,19 @@ def format_digest(items):
 def main():
     all_items = []
 
-    print("Fetching Google Trends Iraq trending searches...")
-    all_items += get_google_trends_iraq()
-
     seed_business_terms = [
         "delivery app", "online booking", "inventory software",
-        "invoice app", "restaurant management", "online store"
+        "invoice app", "restaurant management", "online store",
+        "pos system", "loyalty app", "appointment scheduling",
+        "car rental software", "clinic management", "pharmacy software",
+        "e-commerce Iraq", "digital marketing agency", "gym management app",
+        "real estate app", "food ordering app", "salon booking app"
     ]
-    print("Checking growth trends for seed business terms...")
+    print("Checking growth/interest trends for seed business terms...")
     all_items += get_google_trends_related(seed_business_terms)
 
     print("Fetching Reddit signals...")
-    all_items += get_reddit_trending(["Iraq", "smallbusiness", "Entrepreneur", "SaaS"])
+    all_items += get_reddit_trending(["Iraq", "smallbusiness", "Entrepreneur", "SaaS", "startups"])
 
     ranked = dedupe_and_rank(all_items, top_n=8)
     digest = format_digest(ranked)
