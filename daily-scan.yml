@@ -1,0 +1,37 @@
+name: Daily Trends Scan
+
+on:
+  schedule:
+    # 6:00 AM Baghdad time (UTC+3) = 3:00 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run trend scanner
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python trend_scanner.py
+
+      - name: Commit history file
+        run: |
+          git config user.name "trends-bot"
+          git config user.email "actions@github.com"
+          git add history/ || true
+          git diff --staged --quiet || git commit -m "Daily trends scan $(date +'%Y-%m-%d')"
+          git push
