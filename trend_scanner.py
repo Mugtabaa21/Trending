@@ -79,14 +79,14 @@ def get_news_signals(seed_terms):
     results = []
     for term in seed_terms:
         try:
-            query = quote(f"{term} Iraq")
+            query = quote(f'"{term}" Iraq')
             url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=IQ&ceid=IQ:en"
             resp = requests.get(url, headers=HEADERS, timeout=10)
             if resp.ok:
                 root = ET.fromstring(resp.content)
                 items = root.findall(".//item")
                 count = len(items)
-                if count >= 2:
+                if count >= 1:
                     top_title = items[0].find("title").text if items else term
                     top_link = items[0].find("link").text if items else ""
                     results.append({
