@@ -33,7 +33,11 @@ def get_google_trends_related(seed_terms):
     results = []
     try:
         from pytrends.request import TrendReq
-        pytrends = TrendReq(hl='en-US', tz=180)
+        pytrends = TrendReq(
+            hl='en-US', tz=180,
+            retries=2, backoff_factor=0.5,
+            requests_args={'headers': {'User-Agent': 'Mozilla/5.0'}}
+        )
         for term in seed_terms:
             try:
                 pytrends.build_payload([term], timeframe='today 3-m', geo='IQ')
@@ -66,32 +70,37 @@ def get_google_trends_related(seed_terms):
     return results
 
 
-def get_reddit_trending(subreddits):
-    """Pull hot posts from relevant subreddits as demand/interest signals."""
+def get_news_signals(seed_terms):
+    """Search Google News RSS for each seed term + Iraq context. No auth needed,
+    not blocked by cloud IPs. Recent article count = a rough 'buzz' signal."""
+    import xml.etree.ElementTree as ET
+    from urllib.parse import quote
+
     results = []
-    reddit_headers = {
-        "User-Agent": "web:trend-scanner-bot:v1.0 (by /u/trendscanner)"
-    }
-    for sub in subreddits:
+    for term in seed_terms:
         try:
-            url = f"https://www.reddit.com/r/{sub}/hot.json?limit=15"
-            resp = requests.get(url, headers=reddit_headers, timeout=10)
+            query = quote(f"{term} Iraq")
+            url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=IQ&ceid=IQ:en"
+            resp = requests.get(url, headers=HEADERS, timeout=10)
             if resp.ok:
-                data = resp.json()
-                for post in data["data"]["children"][:10]:
-                    p = post["data"]
-                    if p.get("score", 0) > 5 and not p.get("stickied"):
-                        results.append({
-                            "term": p["title"][:100],
-                            "source": f"Reddit r/{sub}",
-                            "score": min(5, 1 + p["score"] // 100),
-                            "url": f"https://reddit.com{p['permalink']}"
-                        })
+                root = ET.fromstring(resp.content)
+                items = root.findall(".//item")
+                count = len(items)
+                if count >= 2:
+                    top_title = items[0].find("title").text if items else term
+                    top_link = items[0].find("link").text if items else ""
+                    results.append({
+                        "term": term,
+                        "source": "News signal (Iraq)",
+                        "score": min(5, 1 + count),
+                        "note": f"{count} recent articles — latest: {top_title[:80]}",
+                        "url": top_link
+                    })
             else:
-                print(f"Reddit fetch for r/{sub} returned status {resp.status_code}")
+                print(f"News RSS fetch for '{term}' returned status {resp.status_code}")
         except Exception as e:
-            print(f"Reddit fetch failed for r/{sub}:", e)
-        time.sleep(1)
+            print(f"News RSS fetch failed for '{term}':", e)
+        time.sleep(0.5)
     return results
 
 
@@ -140,8 +149,8 @@ def main():
     print("Checking growth/interest trends for seed business terms...")
     all_items += get_google_trends_related(seed_business_terms)
 
-    print("Fetching Reddit signals...")
-    all_items += get_reddit_trending(["Iraq", "smallbusiness", "Entrepreneur", "SaaS", "startups"])
+    print("Fetching news signals...")
+    all_items += get_news_signals(seed_business_terms)
 
     ranked = dedupe_and_rank(all_items, top_n=8)
     digest = format_digest(ranked)
